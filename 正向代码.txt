@@ -1,0 +1,115 @@
+#精神分裂暴露，心律失常结局
+#运行TSMR
+
+library(TwoSampleMR)
+#提取在线的暴露的工具变量，注意extract_instruments函数默认就是p2 = 5e-08,r2 = 0.001,kb = 10000
+baolu1 <- extract_instruments(outcomes = 'ieu-b-5102')
+#解释extract_instruments函数
+#extract_instruments(outcomes,p1 = 5e-08,clump = TRUE,   clump即连锁不平衡
+#p2 = 5e-08,r2 = 0.001,kb = 10000,access_token = ieugwasr::check_access_token(),
+#force_server = FALSE)
+
+#如果想要调整clump参数,即放宽条件  注意：extract_instruments是提取暴露因素的SNP
+baolu1 <- extract_instruments(outcomes = 'finn-b-I9_HEARTFAIL_NS',
+                              clump = TRUE, r2 = 0.01,
+                              kb = 5000, access_token = NULL)
+
+#如果想要调整P值，即放宽条件
+baolu1 <- extract_instruments(outcomes = 'ebi-a-GCST009541',
+                              p1 = 5e-06,
+                              clump = TRUE, r2 = 0.001,
+                              kb = 10000, access_token = NULL）
+#如果想要调整P值，即放宽条件                            
+baolu1 <- extract_instruments(
+  outcomes = "finn-b-DM_PERIPHATHERO",
+  p1 = 5e-06,
+  clump = TRUE,
+  p2 = 5e-06,
+  r2 = 0.001,
+  kb = 10000,
+  force_server = FALSE
+)                          
+                      
+#可以在此算个F值
+write.csv(baolu1, file="baolu1.csv")#存储一下筛选出来的SNP,算算F
+
+#读取暴露本地数据
+exp_dat1 <- read_exposure_data(
+  filename = 'baolu1.csv',     #这个是文件名称
+  sep= ",",   #即每个变量的间隔符是什么
+  snp_col = "SNP",    #即SNP这一栏对应的变量名是什么 必须有
+  beta_col = "beta.exposure",   #必须有
+  se_col = "se.exposure",   #必须有
+  effect_allele_col ="effect_allele.exposure",  #效应等位基因  不必须
+  other_allele_col = "other_allele.exposure",   #非效应等位基因  不必须
+  eaf_col = "eaf.exposure",   #不必须
+  pval_col = "pval.exposure"   #必须有
+)
+exp_dat1$exposure <- "schizophrenia"  #这一步是为了后期图中出来文字表头，因为本地导入的文件没有表头
+
+#读取工具变量在结局当中的信息 ，此时结局的SNP还是open GWAS在线的数据
+out_dat1 <- extract_outcome_data(
+  snps=exp_dat1$SNP,
+  outcomes='ukb-b-3703',  #结局的ID号
+  proxies = FALSE,
+  maf_threshold = 0.01,
+  access_token = NULL
+)
+write.csv(out_dat1, file="out_dat1.csv")#存储一下
+
+#将暴露和结局的数据进行合并对齐，产生用于进行MR分析的数据
+#注意action= 2可以直接出结果；action= 3可以查看有无回文SNP，若有则要剔除，MR分析会自动剔除
+mydata1 <- harmonise_data(
+  exposure_dat=exp_dat1,
+  outcome_dat=out_dat1,
+  action= 3
+)#此时做个独立性和排他性假设
+write.csv(mydata1, file="mydata1.csv")#存储一下harmonise_data后的数据，记得删除回文SNP
+
+
+#MR分析的主要结果:默认用5种方法进行MR分析
+res1 <- mr(mydata1)
+res1    #运行一下这个是为了在底下查看res1，运行了一下后，发现用了MR Egger、Weighted median、
+#Inverse variance weighted、Simple mode和Weighted mode这5种方法。其中5种方法对应的b值以0为界限，
+#后期需要把b换成OR，OR值是以1为界限。下面还有5种方法对应的SE值和P值。
+
+#换算成OR值
+OR1 <-generate_odds_ratios(res1)
+OR1   #运行一下这个是为了在底下查看5种方法对应的OR，还显示了95%CI
+write.csv(OR1, file="OR1.csv")#存储一下
+
+#离群值检验
+#安装MRPRESSO包
+devtools::install_github("rondolab/MR-PRESSO",force = TRUE)
+
+#安装完运行
+library(MRPRESSO) 
+#接下来进行MR_PRESSO检验，即离群值，跑出来的结果会在下面显示如“[1] 45”，即45号是离群值
+#要把baolu1下载下来，把离群值删掉再导入R语言，注意45号是针对mydata1的45号，不保存mydata1因为mydata1下载后不好
+#导入到R，故从源头改，即保存baolu1再剔除
+mr_presso(BetaOutcome ="beta.outcome", BetaExposure = "beta.exposure", SdOutcome ="se.outcome", SdExposure = "se.exposure", 
+          OUTLIERtest = TRUE,DISTORTIONtest = TRUE, data = mydata1, NbDistribution = 1000,  
+          SignifThreshold = 0.05)#NbDistribution = 1000，设置1000到10000均可，越大越能检验出离群值，但是设10000太大电脑跑不出来
+
+
+#异质性
+het1 <- mr_heterogeneity(mydata1)
+het1  #下面的Q代表Q检验   Q_df代表Q检验的自由度       Q_pval代表Q的P值
+write.csv(het1, file="het1.csv")#存储一下
+
+#多效性
+pleio1 <- mr_pleiotropy_test(mydata1)
+pleio1
+write.csv(pleio1, file="pleio1.csv")#存储一下
+
+#逐个剔除检验
+single1 <- mr_leaveoneout(mydata1)
+mr_leaveoneout_plot(single1)
+#散点图
+mr_scatter_plot(res1,mydata1)
+#森林图
+res_single1 <- mr_singlesnp(mydata1)
+mr_forest_plot(res_single1)
+#漏斗图
+mr_funnel_plot(res_single1)
+
